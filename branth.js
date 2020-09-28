@@ -865,6 +865,10 @@ const Font = {
 	get xxl() {
 		this.size = 48;
 		return this.font;
+	},
+	get xxxl() {
+		this.size = 96;
+		return this.font;
 	}
 };
 

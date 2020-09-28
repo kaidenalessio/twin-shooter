@@ -1,3 +1,7 @@
+Math.fuzzyEqual = (a, b, epsilon=0.0001) => {
+	return Math.abs(a - b) < epsilon;
+};
+
 const na = (n) => {
 	const a = [];
 	for (let i = 0; i < n; i++) {
@@ -17,7 +21,10 @@ const checkWinner = () => {
 	let aliveCount = 0;
 	for (const p of OBJ.take(Player)) {
 		if (p.hp <= 0) {
-			console.log(`${p.name}: is eliminated.`);
+			if (!p.freeze) {
+				p.freeze = true;
+				console.log(`${p.name}: is eliminated.`);
+			}
 		}
 		else {
 			name = p.name;
@@ -45,8 +52,10 @@ class Player extends BranthBehaviour {
 		this.direction = 0;
 		this.targetDirection = 0;
 		this.canShoot = true;
+		this.isMoving = false;
 		this.isBoosting = false;
 		this.isShooting = false;
+		this.freeze = false;
 		this.spd = 2;
 		this.maxhp = 20;
 		this.hp = this.maxhp;
@@ -85,10 +94,16 @@ class Player extends BranthBehaviour {
 				Room.restart();
 			}
 		}
+		if (this.freeze) return;
+		this.isMoving = !Math.fuzzyEqual(axes[this.padIndex][0], 0, 0.005) || !Math.fuzzyEqual(axes[this.padIndex][1], 0, 0.005);
 		this.isBoosting = buttons[this.padIndex][7] > 0;
-		this.isShooting = buttons[this.padIndex][5] > 0;
-		this.targetDirection = Math.linedir(this.x, this.y, this.x + this.vx, this.y + this.vy);
-		if (this.isShooting) {
+		this.isShooting = buttons[this.padIndex][5] > 0 || buttons[this.padIndex][2] > 0;
+
+		// Handles speed
+		if (!this.isMoving) {
+			this.spd = 0;
+		}
+		else if (this.isShooting) {
 			if (this.isBoosting) {
 				this.spd = 10;
 			}
@@ -102,11 +117,24 @@ class Player extends BranthBehaviour {
 		else {
 			this.spd = 2;
 		}
+
+		// Target direction when no aim assist
+		const angleToInputAxes = Math.linedir(this.x, this.y, this.x + axes[this.padIndex][0], this.y + axes[this.padIndex][1]);
+		this.targetDirection = angleToInputAxes;
+
+		// Handles aim assist
 		if (!this.isBoosting) {
 			let nearestEnemy = null;
+			let nearestDistance = 0xffffffff;
 			for (const p of OBJ.take(Player)) {
 				if (p.id != this.id) {
-					nearestEnemy = p;
+					if (p.hp > 0) {
+						const d = Math.pointdis(p, this);
+						if (d <= nearestDistance) {
+							nearestEnemy = p;
+							nearestDistance = d;
+						}
+					}
 				}
 			}
 			if (nearestEnemy instanceof Player) {
@@ -114,11 +142,18 @@ class Player extends BranthBehaviour {
 				this.targetDirection = Math.pointdir(this, nearestEnemy);
 			}
 		}
+
+		// Rotate to target
 		this.direction -= Math.sin(Math.degtorad(this.direction - this.targetDirection)) * 10;
-		this.vx = Math.range(this.vx, axes[this.padIndex][0] * this.spd, 0.2);
-		this.vy = Math.range(this.vy, axes[this.padIndex][1] * this.spd, 0.2);
+
+		// Update motion
+		const l = Math.lendir(this.spd, angleToInputAxes);
+		this.vx = Math.range(this.vx, l.x, 0.2);
+		this.vy = Math.range(this.vy, l.y, 0.2);
 		if (Math.abs(this.vx) > 0.005) this.x += this.vx;
 		if (Math.abs(this.vy) > 0.005) this.y += this.vy;
+
+		// Handles particles
 		if (this.isBoosting) {
 			if (Time.step % 5 === 0) {
 				Emitter.preset('puff');
@@ -129,11 +164,15 @@ class Player extends BranthBehaviour {
 				Emitter.emit(1);
 			}
 		}
+
+		// Handles shooting
 		if (this.canShoot && this.isShooting) {
 			this.shoot();
 			this.canShoot = false;
 			this.alarm[0] = 100;
 		}
+
+		// Handles collision
 		this.collisionUpdate();
 	}
 	render() {
@@ -141,6 +180,10 @@ class Player extends BranthBehaviour {
 
 		Draw.setColor(this.color);
 		Draw.circle(this.x, this.y, this.rdraw);
+
+		// Draw.setColor(C.black);
+		// Draw.text(this.x, this.y, this.vx);
+		// Draw.text(this.x, this.y + 24, this.vy);
 	}
 	alarm0() {
 		this.canShoot = true;
@@ -188,6 +231,7 @@ OBJ.add(Player);
 OBJ.add(Bullet);
 
 const Menu = new BranthRoom('Menu');
+const Game = new BranthRoom('Game');
 
 let x = 32, y = 32;
 const line = (text) => {
@@ -195,12 +239,16 @@ const line = (text) => {
 	// y += Font.size;
 };
 
-Menu.start = () => {
+Game.start = () => {
+	OBJ.create(Transition);
 	OBJ.create(Player, Room.mid.w, Room.mid.h * 0.5, 0, C.burlyWood, 'Kakak');
 	OBJ.create(Player, Room.mid.w, Room.mid.h, 1, C.lemonChiffon, 'Aa');
+	for (let i = 0; i < 20; i++) {
+		OBJ.create(Player, Math.range(Room.w), Math.range(Room.h), 1, C.random(), 'Aa');
+	}
 };
 
-Menu.render = () => {
+Game.render = () => {
 	x = 32;
 	y = 32;
 	Draw.setFont(Font.m);
@@ -223,6 +271,9 @@ Menu.render = () => {
 				buttons[i][j] = pad.buttons[j].value;
 			}
 			y += Font.size;
+			if (buttons[i][8] > 0) {
+				Room.start('Menu');
+			}
 		}
 	}
 };
@@ -238,7 +289,7 @@ const drawHealthBar = (centerX, centerY, width, height, value, maxvalue) => {
 	Draw.rect(x + o, y + o, (width - o-o) * scale, height - o-o);
 };
 
-Menu.renderUI = () => {
+Game.renderUI = () => {
 	if (gameOver) {
 		Draw.setAlpha(0.5);
 		Draw.setColor(C.black);
@@ -280,9 +331,42 @@ Menu.renderUI = () => {
 		Draw.plus(p.x + l.x, p.y + l.y, 12);
 		Draw.resetStrokeWeight();
 	}
+
+	Transition.Render();
+};
+
+Menu.start = () => {
+	OBJ.create(Transition);
+};
+
+Menu.renderUI = () => {
+	Emitter.preset('fire');
+	Emitter.setLife(20000, 20000);
+	Emitter.setColor(C.white);
+	Emitter.setArea(0, Room.w, Room.h + 100, Room.h + 100);
+	Emitter.emit(1);
+	let y = Room.mid.h;
+	Draw.setFont(Font.xxxl);
+	Draw.setColor(C.white);
+	Draw.setHVAlign(Align.c, Align.m);
+	Draw.text(Room.mid.w, y, 'Twin Shooter');
+	y += Font.size;
+	Draw.setFont(Font.m, Font.bold);
+	Draw.text(Room.mid.w, y, 'Press <START>');
+
+	Transition.Render();
+
+	for (const pad of navigator.getGamepads()) {
+		if (pad) {
+			if (pad.buttons[9].value > 0) {
+				Room.start('Game');
+			}
+		}
+	}
 };
 
 Room.add(Menu);
+Room.add(Game);
 
 BRANTH.start();
 Room.start('Menu');
