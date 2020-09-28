@@ -48,11 +48,13 @@ class Player extends BranthBehaviour {
 		this.isBoosting = false;
 		this.isShooting = false;
 		this.spd = 2;
-		this.hp = 5;
+		this.maxhp = 20;
+		this.hp = this.maxhp;
 	}
 	shoot() {
 		const l = Math.lendir(this.r + 16, this.direction);
-		OBJ.create(Bullet, this.x + l.x, this.y + l.y, this.direction);
+		const bulletSpeed = this.isBoosting? Math.range(30, 32) : Math.range(19, 20);
+		OBJ.create(Bullet, this.x + l.x, this.y + l.y, bulletSpeed, this.direction);
 	}
 	contains(x, y) {
 		// Check if this circle contains the point with given x and y
@@ -77,23 +79,42 @@ class Player extends BranthBehaviour {
 		}
 	}
 	update() {
-		this.targetDirection = Math.linedir(this.x, this.y, this.x + this.vx, this.y + this.vy);
-		this.direction -= Math.sin(Math.degtorad(this.direction - this.targetDirection)) * 10;
+		if (gameOver) {
+			if (buttons[this.padIndex][9] > 0) {
+				gameOver = false;
+				Room.restart();
+			}
+		}
 		this.isBoosting = buttons[this.padIndex][7] > 0;
 		this.isShooting = buttons[this.padIndex][5] > 0;
-		this.spd = 2;
-		if (this.isBoosting) {
-			this.spd = 5;
-		}
+		this.targetDirection = Math.linedir(this.x, this.y, this.x + this.vx, this.y + this.vy);
 		if (this.isShooting) {
 			if (this.isBoosting) {
-				this.spd = 4;
+				this.spd = 10;
 			}
 			else {
-				// Aim assist active
-				this.spd = 0.5;
+				this.spd = 2;
 			}
 		}
+		else if (this.isBoosting) {
+			this.spd = 16;
+		}
+		else {
+			this.spd = 2;
+		}
+		if (!this.isBoosting) {
+			let nearestEnemy = null;
+			for (const p of OBJ.take(Player)) {
+				if (p.id != this.id) {
+					nearestEnemy = p;
+				}
+			}
+			if (nearestEnemy instanceof Player) {
+				// Aim assist active
+				this.targetDirection = Math.pointdir(this, nearestEnemy);
+			}
+		}
+		this.direction -= Math.sin(Math.degtorad(this.direction - this.targetDirection)) * 10;
 		this.vx = Math.range(this.vx, axes[this.padIndex][0] * this.spd, 0.2);
 		this.vy = Math.range(this.vy, axes[this.padIndex][1] * this.spd, 0.2);
 		if (Math.abs(this.vx) > 0.005) this.x += this.vx;
@@ -120,13 +141,6 @@ class Player extends BranthBehaviour {
 
 		Draw.setColor(this.color);
 		Draw.circle(this.x, this.y, this.rdraw);
-
-		Draw.setColor(C.black);
-		Draw.text(this.x, this.y - 100, this.hp);
-		// Draw.text(this.x, this.y, axes[this.padIndex][0]);
-		// Draw.text(this.x, this.y + 32, axes[this.padIndex][1]);
-		// Draw.text(this.x, this.y + 32 * 2, this.vx);
-		// Draw.text(this.x, this.y + 32 * 3, this.vy);
 	}
 	alarm0() {
 		this.canShoot = true;
@@ -151,9 +165,8 @@ class Player extends BranthBehaviour {
 }());
 
 class Bullet extends BranthGameObject {
-	constructor(x, y, angle) {
+	constructor(x, y, spd, angle) {
 		super(x, y);
-		const spd = Math.range(19, 20);
 		angle = Math.range(angle - 5, angle + 5);
 		this.hspeed = Math.lendirx(spd, angle);
 		this.vspeed = Math.lendiry(spd, angle);
@@ -214,6 +227,17 @@ Menu.render = () => {
 	}
 };
 
+const drawHealthBar = (centerX, centerY, width, height, value, maxvalue) => {
+	const scale = Math.clamp(value / maxvalue, 0, 1);
+	const x = centerX - width * 0.5;
+	const y = centerY - height * 0.5
+	const o = 1; // Stroke weight
+	Draw.setColor(C.black);
+	Draw.rect(x, y, width, height);
+	Draw.setColor(`rgb(${255 * (1 - scale)}, ${255 * scale}, 0)`);
+	Draw.rect(x + o, y + o, (width - o-o) * scale, height - o-o);
+};
+
 Menu.renderUI = () => {
 	if (gameOver) {
 		Draw.setAlpha(0.5);
@@ -227,19 +251,31 @@ Menu.renderUI = () => {
 		return;
 	}
 	Draw.setFont(Font.m);
-	Draw.setColor(C.white);
 	Draw.setHVAlign(Align.c, Align.b);
 	for (const p of OBJ.take(Player)) {
-		const y = p.y + Math.sin(Time.time * 0.01);
-		Draw.primitiveBegin();
-		Draw.vertex(p.x, y - p.r - 4);
-		Draw.vertex(p.x - 10, y - p.r - 14);
-		Draw.vertex(p.x + 10, y - p.r - 14);
-		Draw.primitiveEnd();
-		Draw.text(p.x, y - p.r - 18, p.name);
+
+		// Player cursor
+		const ty = p.y - p.r - 28 + Math.sin(Time.time * 0.01);
 		Draw.setColor(C.white);
-		Draw.setStrokeWeight(2);
+		Draw.primitiveBegin();
+		Draw.vertex(p.x, ty - 4);
+		Draw.vertex(p.x - 10, ty - 14);
+		Draw.vertex(p.x + 10, ty - 14);
+		Draw.primitiveEnd();
+
+		// Health bar
+		drawHealthBar(p.x, ty - 24, 128, 8, p.hp, p.maxhp);
+
+		// Player name
+		Draw.setColor(C.white);
+		Draw.text(p.x, ty - 32, p.name);
+
+		// Draw crosshair
 		const l = Math.lendir(p.r + 16, p.direction);
+		// Bold crosshair = aim assist active
+		if (!p.isBoosting) {
+			Draw.setStrokeWeight(2);
+		}
 		Draw.circle(p.x + l.x, p.y + l.y, 8, true);
 		Draw.plus(p.x + l.x, p.y + l.y, 12);
 		Draw.resetStrokeWeight();
